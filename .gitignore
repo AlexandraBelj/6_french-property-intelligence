@@ -1,0 +1,59 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ==============================
+# Project data
+# ==============================
+# Raw and processed datasets must not be committed
+data/raw/*
+data/processed/*
+
+# Keep directory structure in Git
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Small, intentionally selected samples may be committed
+# data/samples/ is NOT ignored
+
+# ==============================
+# Generated outputs
+# ==============================
+outputs/figures/*
+outputs/metrics/*
+outputs/reports/*
+
+!outputs/figures/.gitkeep
+!outputs/metrics/.gitkeep
+!outputs/reports/.gitkeep
+
+# ==============================
+# Models / serialized artifacts
+# ==============================
+*.pkl
+*.joblib
+
+# ==============================
+# OS / IDE
+# ==============================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
