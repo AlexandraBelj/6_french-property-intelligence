@@ -14,4 +14,5 @@ CMD ["sh", "-c", "mlflow server \
     --host 0.0.0.0 \
     --port 7860 \
     --allowed-hosts 'alexbelj-french-property-intelligence-mlflow.hf.space' \
+    --cors-allowed-origins 'https://alexbelj-french-property-intelligence-mlflow.hf.space,https://huggingface.co' \
     --x-frame-options NONE"]
