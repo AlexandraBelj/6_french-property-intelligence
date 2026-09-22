@@ -13,6 +13,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# LightGBM requires the GNU OpenMP runtime on Linux.
+# python:3.12-slim does not include it by default.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies first so Docker can cache this layer.
 COPY requirements.txt .
 
