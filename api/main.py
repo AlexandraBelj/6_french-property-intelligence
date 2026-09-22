@@ -15,6 +15,7 @@ The production model is loaded once when the API application starts.
 It is NOT reloaded for every prediction.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -26,6 +27,17 @@ from api.schemas import (
     PredictionRequest,
     PredictionResponse,
 )
+
+
+# ---------------------------------------------------------------------
+# Logging
+#
+# PURPOSE:
+# Record unexpected server-side prediction errors in deployment logs
+# without exposing internal implementation details to API clients.
+# ---------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
@@ -154,7 +166,12 @@ def predict_property(
         ) from exc
 
     except Exception as exc:
-        # Do not expose internal model/server details to API clients.
+        # Keep the public response generic, but preserve the complete
+        # exception and traceback in the server logs for diagnosis.
+        logger.exception(
+            "Unexpected error during property valuation inference."
+        )
+
         raise HTTPException(
             status_code=500,
             detail="Prediction failed.",
