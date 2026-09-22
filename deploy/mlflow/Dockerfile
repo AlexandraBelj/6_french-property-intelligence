@@ -13,4 +13,5 @@ CMD ["sh", "-c", "mlflow server \
     --artifacts-destination s3://french-property-intelligence-539152062780-eu-central-1-an/mlflow-artifacts \
     --host 0.0.0.0 \
     --port 7860 \
-    --allowed-hosts 'alexbelj-french-property-intelligence-mlflow.hf.space'"]
+    --allowed-hosts 'alexbelj-french-property-intelligence-mlflow.hf.space' \
+    --x-frame-options NONE"]
