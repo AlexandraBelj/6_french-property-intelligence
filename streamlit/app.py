@@ -63,8 +63,14 @@ API_URL = os.getenv(
 PREDICT_URL = f"{API_URL}/predict"
 LOCATION_URL = f"{API_URL}/location"
 ENVIRONMENT_URL = f"{API_URL}/environment"
+DESCRIPTION_URL = f"{API_URL}/description"
 
+# Standard timeout for valuation and contextual API services.
 REQUEST_TIMEOUT_SECONDS = 30
+
+# GenAI can require more time than the deterministic API services,
+# especially when the external inference provider has a cold start.
+GENERATION_TIMEOUT_SECONDS = 90
 
 
 # ---------------------------------------------------------------------
@@ -146,6 +152,13 @@ def render_nearby_places(
 
 if "valuation_result" not in st.session_state:
     st.session_state.valuation_result = None
+
+# PURPOSE:
+# Store the generated description independently from the valuation.
+# This prevents a GenAI request from being repeated every time
+# Streamlit reruns because of another UI interaction.
+if "property_description" not in st.session_state:
+    st.session_state.property_description = None
 
 
 # ---------------------------------------------------------------------
@@ -545,7 +558,10 @@ if submitted:
 
                 # -----------------------------------------------------
                 # Save one coherent property-analysis result.
+                # A new valuation invalidates the previous description.
                 # -----------------------------------------------------
+
+                st.session_state.property_description = None
 
                 st.session_state.valuation_result = {
                     "estimated_price": estimated_price,
@@ -1106,24 +1122,128 @@ if st.session_state.valuation_result is not None:
             
     # -----------------------------------------------------------------
     # GENAI DESCRIPTION TAB
+    #
+    # PURPOSE:
+    # Generate a concise real-estate description only from facts already
+    # verified by the valuation and contextual services. GenAI does not
+    # calculate the property value and failure here never invalidates it.
     # -----------------------------------------------------------------
 
     with description_tab:
 
         st.subheader("Description immobilière")
 
-        st.markdown(
-            """
-            <div class="placeholder-card">
-                <div class="placeholder-title">
-                    ✨ Description générée
-                </div>
-                <div class="placeholder-text">
-                    Une description pourra être générée à partir
-                    des informations vérifiées du bien, de son
-                    estimation et de son environnement.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.caption(
+            "Générez une présentation du bien à partir de ses "
+            "caractéristiques, de l'estimation et des informations "
+            "d'environnement disponibles."
         )
+
+        valuation = st.session_state.valuation_result
+        environment = valuation.get("environment") or {}
+
+        def description_places(category: str) -> list[dict]:
+            """Return a compact POI list for the GenAI API."""
+
+            places = environment.get(category, [])
+            return [
+                {
+                    "name": place.get("name", "Lieu"),
+                    "distance_m": place.get("distance_m"),
+                }
+                for place in places[:3]
+            ]
+
+        description_payload = {
+            "property_type": valuation["property_type"],
+            "surface_habitable": valuation["surface_habitable"],
+            "n_pieces": valuation["n_pieces"],
+            "vefa": valuation["vefa"],
+            "resolved_address": valuation["resolved_address"],
+            "estimated_price_eur": valuation["estimated_price"],
+            "environment": {
+                "transport": description_places("transport"),
+                "green_spaces": description_places("green_spaces"),
+                "supermarkets": description_places("supermarkets"),
+            },
+        }
+
+        button_label = (
+            "✨ Générer la description"
+            if st.session_state.property_description is None
+            else "✨ Régénérer la description"
+        )
+
+        if st.button(
+            button_label,
+            type="primary",
+            use_container_width=True,
+        ):
+
+            try:
+                with st.spinner(
+                    "Génération de la description immobilière..."
+                ):
+                    description_response = requests.post(
+                        DESCRIPTION_URL,
+                        json=description_payload,
+                        timeout=GENERATION_TIMEOUT_SECONDS,
+                    )
+
+                if description_response.status_code == 200:
+                    description_result = description_response.json()
+                    generated_description = description_result["description"]
+
+                    if (
+                        not isinstance(generated_description, str)
+                        or not generated_description.strip()
+                    ):
+                        st.error(
+                            "La description reçue est invalide. "
+                            "Veuillez réessayer."
+                        )
+                    else:
+                        st.session_state.property_description = (
+                            generated_description.strip()
+                        )
+
+                elif description_response.status_code == 503:
+                    st.warning(
+                        "La génération de description est temporairement "
+                        "indisponible. Votre estimation reste disponible."
+                    )
+                else:
+                    st.error(
+                        "La description n'a pas pu être générée. "
+                        "Veuillez réessayer."
+                    )
+
+            except requests.Timeout:
+                st.warning(
+                    "La génération prend plus de temps que prévu. "
+                    "Veuillez réessayer dans quelques instants."
+                )
+            except requests.ConnectionError:
+                st.warning(
+                    "Le service de génération est temporairement "
+                    "inaccessible. Votre estimation reste disponible."
+                )
+            except (
+                requests.RequestException,
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
+                st.error(
+                    "Une erreur est survenue pendant la génération "
+                    "de la description."
+                )
+
+        if st.session_state.property_description:
+            st.markdown("---")
+            st.markdown(st.session_state.property_description)
+            st.caption(
+                "✨ Texte généré automatiquement à partir des informations "
+                "disponibles. L'estimation reste indicative et ne constitue "
+                "pas une expertise immobilière."
+            )

@@ -21,6 +21,16 @@ User address
     -> verified geographic coordinates
     -> map / nearby environment / neighborhood services
 
+GenAI flow:
+
+Verified property + valuation + environment facts
+    -> Hugging Face language model
+    -> natural-language property description
+
+IMPORTANT:
+The language model is a presentation layer only. It never calculates
+or modifies the machine-learning property valuation.
+
 The production model is loaded once when the API application starts.
 It is NOT reloaded for every prediction.
 """
@@ -34,9 +44,15 @@ from api.environment import (
     EnvironmentError,
     get_nearby_environment,
 )
+from api.generation import (
+    GenerationError,
+    generate_property_description,
+)
 from api.geocoding import GeocodingError, geocode_address
 from api.model_loader import ModelLoadingError, load_production_model
 from api.schemas import (
+    DescriptionRequest,
+    DescriptionResponse,
     EnvironmentResponse,
     HealthResponse,
     LocationRequest,
@@ -102,7 +118,7 @@ app = FastAPI(
         "Indicative residential property valuation and "
         "property-context API for metropolitan France."
     ),
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -255,6 +271,74 @@ def property_environment(
             )
             for place in environment["supermarkets"]
         ],
+    )
+
+
+# ---------------------------------------------------------------------
+# GenAI description endpoint
+#
+# PURPOSE:
+# Transform verified structured facts into readable French prose.
+#
+# IMPORTANT:
+# This endpoint does not call the valuation model and does not calculate
+# a property price. estimated_price_eur is supplied as an existing fact.
+# ---------------------------------------------------------------------
+
+@app.post(
+    "/description",
+    response_model=DescriptionResponse,
+)
+def describe_property(
+    request: DescriptionRequest,
+) -> DescriptionResponse:
+    """Generate a French description from verified property facts."""
+
+    environment = (
+        request.environment.model_dump()
+        if request.environment is not None
+        else None
+    )
+
+    try:
+
+        description = generate_property_description(
+            property_type=request.property_type,
+            surface_habitable=request.surface_habitable,
+            n_pieces=request.n_pieces,
+            vefa=request.vefa,
+            resolved_address=request.resolved_address,
+            estimated_price_eur=request.estimated_price_eur,
+            environment=environment,
+        )
+
+    except GenerationError as exc:
+
+        # Log the technical reason server-side, but expose only a generic
+        # service message to the public API client.
+        logger.warning(
+            "GenAI description service failed: %s",
+            exc,
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail="Property description generation is unavailable.",
+        ) from exc
+
+    except Exception as exc:
+
+        logger.exception(
+            "Unexpected error during property description generation."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Property description generation failed.",
+        ) from exc
+
+    return DescriptionResponse(
+        description=description,
     )
 
 
