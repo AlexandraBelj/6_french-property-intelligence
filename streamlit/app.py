@@ -1022,27 +1022,88 @@ if st.session_state.valuation_result is not None:
 
     # -----------------------------------------------------------------
     # NEIGHBORHOOD TAB
+    #
+    # PURPOSE:
+    # Allow the user to visually explore the neighborhood around the
+    # verified property location using Google Street View.
+    #
+    # Street View is deliberately kept outside the valuation model.
+    # The application sends only the verified geographic coordinates
+    # through a standard Google Maps URL; no Google API key is required.
     # -----------------------------------------------------------------
 
     with neighborhood_tab:
 
         st.subheader("Explorer le quartier")
 
-        st.markdown(
-            """
-            <div class="placeholder-card">
-                <div class="placeholder-title">
-                    👁️ Vue du quartier
-                </div>
-                <div class="placeholder-text">
-                    Cette vue accueillera l'exploration visuelle
-                    du quartier autour de l'adresse reconnue.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.caption(
+            "Visualisez les rues et l'environnement autour de la "
+            "localisation reconnue du bien."
         )
 
+        valuation = st.session_state.valuation_result
+
+        latitude = valuation.get("latitude")
+        longitude = valuation.get("longitude")
+
+        if latitude is None or longitude is None:
+
+            st.warning(
+                "La localisation du bien est temporairement indisponible. "
+                "L'exploration du quartier ne peut pas être ouverte."
+            )
+
+        else:
+
+            # ---------------------------------------------------------
+            # Google Maps Street View URL
+            #
+            # PURPOSE:
+            # Open the Street View panorama nearest to the verified
+            # property coordinates without requiring another API,
+            # backend service or application secret.
+            # ---------------------------------------------------------
+
+            street_view_url = (
+                "https://www.google.com/maps/@"
+                "?api=1"
+                "&map_action=pano"
+                f"&viewpoint={latitude},{longitude}"
+            )
+
+            st.markdown(
+                """
+                <div class="placeholder-card">
+                    <div class="placeholder-title">
+                        👁️ Explorer le quartier en Street View
+                    </div>
+                    <div class="placeholder-text">
+                        Parcourez visuellement les rues autour du bien
+                        dans Google Street View.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.link_button(
+                "🌐 Ouvrir Street View",
+                street_view_url,
+                use_container_width=True,
+                type="primary",
+            )
+
+            st.markdown(
+                f"**📍 Point de départ : "
+                f"{valuation['resolved_address']}**"
+            )
+
+            st.caption(
+                "Street View ouvre le panorama disponible le plus proche "
+                "des coordonnées reconnues. La vue peut donc se situer "
+                "à proximité du bien plutôt que devant le bâtiment exact."
+            )
+            
     # -----------------------------------------------------------------
     # GENAI DESCRIPTION TAB
     # -----------------------------------------------------------------
