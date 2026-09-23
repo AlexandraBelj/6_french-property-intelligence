@@ -1,15 +1,25 @@
 """
 PURPOSE
 -------
-Expose the French Property Intelligence valuation model through FastAPI.
+Expose the French Property Intelligence services through FastAPI.
 
-The API keeps user-facing inputs separate from internal model features:
+The API separates user-facing property information from internal
+geographic and machine-learning features.
+
+Valuation flow:
 
 User address
     -> official French geocoding service
     -> latitude / longitude / postcode
     -> frozen PropertyValuationModel
     -> estimated transaction value
+
+Context flow:
+
+User address
+    -> official French geocoding service
+    -> verified geographic coordinates
+    -> map / environment / neighborhood services
 
 The production model is loaded once when the API application starts.
 It is NOT reloaded for every prediction.
@@ -24,6 +34,8 @@ from api.geocoding import GeocodingError, geocode_address
 from api.model_loader import ModelLoadingError, load_production_model
 from api.schemas import (
     HealthResponse,
+    LocationRequest,
+    LocationResponse,
     PredictionRequest,
     PredictionResponse,
 )
@@ -61,6 +73,7 @@ async def lifespan(app: FastAPI):
 
     try:
         production_model = load_production_model()
+
     except ModelLoadingError as exc:
         # A missing, corrupted or untrusted model is a deployment failure.
         # The API must not start serving predictions in that state.
@@ -80,8 +93,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="French Property Intelligence API",
     description=(
-        "Indicative residential property valuation API for "
-        "metropolitan France."
+        "Indicative residential property valuation and "
+        "property-context API for metropolitan France."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -104,6 +117,49 @@ def health() -> HealthResponse:
     return HealthResponse(
         status="ok" if production_model is not None else "unavailable",
         model_loaded=production_model is not None,
+    )
+
+
+# ---------------------------------------------------------------------
+# Location endpoint
+#
+# PURPOSE:
+# Resolve a user-entered address into verified geographic coordinates.
+#
+# This endpoint is deliberately separate from /predict:
+# - /predict remains the frozen valuation contract;
+# - /location supports presentation/context features;
+# - Streamlit does not need to call the geocoder directly.
+# ---------------------------------------------------------------------
+
+@app.post(
+    "/location",
+    response_model=LocationResponse,
+)
+def resolve_location(
+    request: LocationRequest,
+) -> LocationResponse:
+    """
+    Resolve one French address into geographic coordinates.
+
+    The coordinates come from the same geocoding service already used
+    by the valuation endpoint, ensuring consistent location handling.
+    """
+
+    try:
+        location = geocode_address(request.address)
+
+    except GeocodingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    return LocationResponse(
+        latitude=location.latitude,
+        longitude=location.longitude,
+        postcode=location.postcode,
+        resolved_address=location.resolved_address,
     )
 
 

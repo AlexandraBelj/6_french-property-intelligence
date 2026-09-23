@@ -1,0 +1,4 @@
+streamlit
+requests==2.34.2
+folium
+streamlit-folium
