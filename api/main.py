@@ -19,7 +19,7 @@ Context flow:
 User address
     -> official French geocoding service
     -> verified geographic coordinates
-    -> map / environment / neighborhood services
+    -> map / nearby environment / neighborhood services
 
 The production model is loaded once when the API application starts.
 It is NOT reloaded for every prediction.
@@ -30,12 +30,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from api.environment import (
+    EnvironmentError,
+    get_nearby_environment,
+)
 from api.geocoding import GeocodingError, geocode_address
 from api.model_loader import ModelLoadingError, load_production_model
 from api.schemas import (
+    EnvironmentResponse,
     HealthResponse,
     LocationRequest,
     LocationResponse,
+    NearbyPlaceResponse,
     PredictionRequest,
     PredictionResponse,
 )
@@ -45,8 +51,8 @@ from api.schemas import (
 # Logging
 #
 # PURPOSE:
-# Record unexpected server-side prediction errors in deployment logs
-# without exposing internal implementation details to API clients.
+# Record unexpected server-side errors in deployment logs without
+# exposing internal implementation details to API clients.
 # ---------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
@@ -126,10 +132,7 @@ def health() -> HealthResponse:
 # PURPOSE:
 # Resolve a user-entered address into verified geographic coordinates.
 #
-# This endpoint is deliberately separate from /predict:
-# - /predict remains the frozen valuation contract;
-# - /location supports presentation/context features;
-# - Streamlit does not need to call the geocoder directly.
+# This endpoint remains deliberately separate from /predict.
 # ---------------------------------------------------------------------
 
 @app.post(
@@ -139,12 +142,7 @@ def health() -> HealthResponse:
 def resolve_location(
     request: LocationRequest,
 ) -> LocationResponse:
-    """
-    Resolve one French address into geographic coordinates.
-
-    The coordinates come from the same geocoding service already used
-    by the valuation endpoint, ensuring consistent location handling.
-    """
+    """Resolve one French address into geographic coordinates."""
 
     try:
         location = geocode_address(request.address)
@@ -164,7 +162,107 @@ def resolve_location(
 
 
 # ---------------------------------------------------------------------
+# Environment endpoint
+#
+# PURPOSE:
+# Combine our verified geocoding service with Geoapify Places.
+#
+# The client supplies only the property address. Latitude and longitude
+# are resolved internally, keeping geographic handling consistent with
+# /predict and /location.
+# ---------------------------------------------------------------------
+
+@app.post(
+    "/environment",
+    response_model=EnvironmentResponse,
+)
+def property_environment(
+    request: LocationRequest,
+) -> EnvironmentResponse:
+    """Return cleaned nearby environment information for one property."""
+
+    # -------------------------------------------------------------
+    # 1. Resolve the address using our existing geocoding service.
+    # -------------------------------------------------------------
+
+    try:
+        location = geocode_address(request.address)
+
+    except GeocodingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    # -------------------------------------------------------------
+    # 2. Retrieve nearby POIs from the contextual data provider.
+    # -------------------------------------------------------------
+
+    try:
+        environment = get_nearby_environment(
+            latitude=location.latitude,
+            longitude=location.longitude,
+        )
+
+    except EnvironmentError as exc:
+
+        logger.warning(
+            "Environment service failed: %s",
+            exc,
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail="Nearby environment information is unavailable.",
+        ) from exc
+
+    # -------------------------------------------------------------
+    # 3. Convert internal POI objects into the public API contract.
+    # -------------------------------------------------------------
+
+    return EnvironmentResponse(
+        resolved_address=location.resolved_address,
+        postcode=location.postcode,
+        latitude=location.latitude,
+        longitude=location.longitude,
+        transport=[
+            NearbyPlaceResponse(
+                name=place.name,
+                address=place.address,
+                distance_m=place.distance_m,
+                latitude=place.latitude,
+                longitude=place.longitude,
+            )
+            for place in environment["transport"]
+        ],
+        green_spaces=[
+            NearbyPlaceResponse(
+                name=place.name,
+                address=place.address,
+                distance_m=place.distance_m,
+                latitude=place.latitude,
+                longitude=place.longitude,
+            )
+            for place in environment["green_spaces"]
+        ],
+        supermarkets=[
+            NearbyPlaceResponse(
+                name=place.name,
+                address=place.address,
+                distance_m=place.distance_m,
+                latitude=place.latitude,
+                longitude=place.longitude,
+            )
+            for place in environment["supermarkets"]
+        ],
+    )
+
+
+# ---------------------------------------------------------------------
 # Prediction endpoint
+#
+# IMPORTANT:
+# The validated production prediction behavior remains unchanged.
 # ---------------------------------------------------------------------
 
 @app.post(
@@ -222,8 +320,6 @@ def predict_property(
         ) from exc
 
     except Exception as exc:
-        # Keep the public response generic, but preserve the complete
-        # exception and traceback in the server logs for diagnosis.
         logger.exception(
             "Unexpected error during property valuation inference."
         )

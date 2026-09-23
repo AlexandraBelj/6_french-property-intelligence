@@ -9,9 +9,12 @@ The application provides a property-intelligence journey:
 2. Streamlit sends the information to the FastAPI service.
 3. FastAPI geocodes the address and runs the frozen production model.
 4. Streamlit presents the valuation in a compact dashboard.
-5. The environment tab displays the verified property location.
+5. The environment tab displays:
+   - the verified property location;
+   - nearby public transport;
+   - nearby green spaces;
+   - nearby supermarkets.
 6. Additional tabs will progressively provide:
-   - nearby transport, green spaces and shops;
    - neighborhood / Street View exploration;
    - GenAI property description.
 
@@ -22,6 +25,7 @@ Streamlit does NOT load model.pkl directly.
 Production architecture:
 
 Streamlit -> FastAPI -> IGN geocoding -> S3 model -> prediction
+                    -> Geoapify Places -> nearby environment
 
 The ML model remains frozen behind the FastAPI service.
 """
@@ -58,6 +62,7 @@ API_URL = os.getenv(
 
 PREDICT_URL = f"{API_URL}/predict"
 LOCATION_URL = f"{API_URL}/location"
+ENVIRONMENT_URL = f"{API_URL}/environment"
 
 REQUEST_TIMEOUT_SECONDS = 30
 
@@ -83,12 +88,60 @@ def format_price_per_m2(price: float, surface: float) -> str:
     return f"{value:,.0f} €/m²".replace(",", " ")
 
 
+def format_distance(distance_m: int) -> str:
+    """
+    Format a nearby-place distance for compact display.
+
+    Distances under one kilometre are displayed in metres.
+    Longer distances are displayed in kilometres.
+    """
+
+    if distance_m < 1000:
+        return f"{distance_m} m"
+
+    return f"{distance_m / 1000:.1f} km".replace(".", ",")
+
+
+def render_nearby_places(
+    title: str,
+    places: list[dict],
+) -> None:
+    """
+    Render one compact POI category.
+
+    PURPOSE:
+    Keep the environment summary readable instead of displaying a large
+    raw table of provider data.
+    """
+
+    st.markdown(f"#### {title}")
+
+    if not places:
+        st.caption("Aucun point d'intérêt proche identifié.")
+        return
+
+    for place in places:
+
+        name = place.get("name", "Lieu")
+        distance = place.get("distance_m")
+
+        if isinstance(distance, (int, float)):
+            distance_text = format_distance(int(distance))
+        else:
+            distance_text = "Distance indisponible"
+
+        st.markdown(
+            f"**{name}**  \n"
+            f"📍 {distance_text}"
+        )
+
+
 # ---------------------------------------------------------------------
 # Session state
 #
 # PURPOSE:
-# Keep the latest successful valuation visible when Streamlit reruns.
-# Contextual services can therefore use the same verified property.
+# Keep the latest successful valuation and its contextual information
+# visible when Streamlit reruns.
 # ---------------------------------------------------------------------
 
 if "valuation_result" not in st.session_state:
@@ -176,6 +229,14 @@ st.markdown(
 
     .location-text {
         font-size: 1rem;
+    }
+
+    .environment-legend {
+        border: 1px solid rgba(128, 128, 128, 0.20);
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.8rem;
+        font-size: 0.92rem;
     }
 
     .placeholder-card {
@@ -411,15 +472,9 @@ if submitted:
                 postcode = result["postcode"]
 
                 # -----------------------------------------------------
-                # Resolve coordinates for contextual features.
+                # Resolve coordinates for the base property map.
                 #
-                # PURPOSE:
-                # /predict remains dedicated to valuation.
-                # /location provides verified coordinates for the map
-                # and future environment / neighborhood services.
-                #
-                # A failure here must NOT invalidate a successful
-                # property valuation.
+                # A failure here must NOT invalidate the valuation.
                 # -----------------------------------------------------
 
                 latitude = None
@@ -453,10 +508,44 @@ if submitted:
                     TypeError,
                     ValueError,
                 ):
-                    # Contextual services are optional enhancements.
-                    # The successful valuation remains valid if the
-                    # location endpoint is temporarily unavailable.
                     pass
+
+                # -----------------------------------------------------
+                # Retrieve contextual environment information.
+                #
+                # PURPOSE:
+                # Enrich the product with nearby transport, parks and
+                # supermarkets without affecting ML inference.
+                #
+                # This service is optional. A failure must never erase
+                # or invalidate a successful property valuation.
+                # -----------------------------------------------------
+
+                environment = None
+
+                try:
+
+                    environment_response = requests.post(
+                        ENVIRONMENT_URL,
+                        json={
+                            "address": cleaned_address,
+                        },
+                        timeout=REQUEST_TIMEOUT_SECONDS,
+                    )
+
+                    if environment_response.status_code == 200:
+
+                        environment = environment_response.json()
+
+                except (
+                    requests.RequestException,
+                    ValueError,
+                ):
+                    pass
+
+                # -----------------------------------------------------
+                # Save one coherent property-analysis result.
+                # -----------------------------------------------------
 
                 st.session_state.valuation_result = {
                     "estimated_price": estimated_price,
@@ -470,6 +559,7 @@ if submitted:
                     "user_address": cleaned_address,
                     "latitude": latitude,
                     "longitude": longitude,
+                    "environment": environment,
                 }
 
         except requests.Timeout:
@@ -547,11 +637,6 @@ with result_column:
         )
 
         st.subheader("Estimation du bien")
-
-        # IMPORTANT:
-        # Keep the HTML compact and without Markdown indentation.
-        # This prevents Streamlit/Markdown from interpreting the HTML
-        # content as a literal code block.
 
         estimate_html = (
             '<div class="estimate-card">'
@@ -686,11 +771,10 @@ if st.session_state.valuation_result is not None:
     # ENVIRONMENT TAB
     #
     # PURPOSE:
-    # Display the verified geographic position of the property.
+    # Combine the verified property position with nearby contextual POIs.
     #
-    # This map is deliberately independent from ML inference.
-    # Nearby transport, green spaces and shops will later be added as
-    # contextual layers around this same verified property position.
+    # The environment information is descriptive only. It is NOT fed
+    # back into the frozen machine-learning valuation model.
     # -----------------------------------------------------------------
 
     with environment_tab:
@@ -698,14 +782,15 @@ if st.session_state.valuation_result is not None:
         st.subheader("Environnement du bien")
 
         st.caption(
-            "Explorez la localisation reconnue du bien "
-            "et son environnement."
+            "Explorez la localisation reconnue du bien et les principaux "
+            "services à proximité."
         )
 
         valuation = st.session_state.valuation_result
 
         latitude = valuation.get("latitude")
         longitude = valuation.get("longitude")
+        environment = valuation.get("environment")
 
         if latitude is None or longitude is None:
 
@@ -720,9 +805,8 @@ if st.session_state.valuation_result is not None:
             # Interactive property map
             #
             # PURPOSE:
-            # Provide immediate geographic context around the property.
-            # The same map can later receive POI markers without
-            # changing the frozen valuation model.
+            # Display the property and the nearest contextual POIs on
+            # one readable map.
             # ---------------------------------------------------------
 
             property_map = folium.Map(
@@ -734,6 +818,10 @@ if st.session_state.valuation_result is not None:
                 control_scale=True,
             )
 
+            # ---------------------------------------------------------
+            # Main property marker
+            # ---------------------------------------------------------
+
             folium.Marker(
                 location=[
                     latitude,
@@ -742,10 +830,122 @@ if st.session_state.valuation_result is not None:
                 tooltip="Bien analysé",
                 popup=valuation["resolved_address"],
                 icon=folium.Icon(
+                    color="red",
                     icon="home",
                     prefix="fa",
                 ),
             ).add_to(property_map)
+
+            # ---------------------------------------------------------
+            # Contextual POI markers
+            # ---------------------------------------------------------
+
+            if environment:
+
+                poi_categories = [
+                    (
+                        "transport",
+                        "Transport",
+                        "blue",
+                        "train",
+                    ),
+                    (
+                        "green_spaces",
+                        "Espace vert",
+                        "green",
+                        "tree",
+                    ),
+                    (
+                        "supermarkets",
+                        "Supermarché",
+                        "orange",
+                        "shopping-cart",
+                    ),
+                ]
+
+                for (
+                    category_key,
+                    category_label,
+                    marker_color,
+                    marker_icon,
+                ) in poi_categories:
+
+                    for place in environment.get(
+                        category_key,
+                        [],
+                    ):
+
+                        try:
+
+                            poi_latitude = float(
+                                place["latitude"]
+                            )
+
+                            poi_longitude = float(
+                                place["longitude"]
+                            )
+
+                        except (
+                            KeyError,
+                            TypeError,
+                            ValueError,
+                        ):
+                            continue
+
+                        distance = place.get(
+                            "distance_m"
+                        )
+
+                        if isinstance(
+                            distance,
+                            (int, float),
+                        ):
+                            distance_text = format_distance(
+                                int(distance)
+                            )
+                        else:
+                            distance_text = (
+                                "Distance indisponible"
+                            )
+
+                        popup_text = (
+                            f"{category_label} — "
+                            f"{place.get('name', 'Lieu')} "
+                            f"({distance_text})"
+                        )
+
+                        folium.Marker(
+                            location=[
+                                poi_latitude,
+                                poi_longitude,
+                            ],
+                            tooltip=place.get(
+                                "name",
+                                category_label,
+                            ),
+                            popup=popup_text,
+                            icon=folium.Icon(
+                                color=marker_color,
+                                icon=marker_icon,
+                                prefix="fa",
+                            ),
+                        ).add_to(property_map)
+
+            # ---------------------------------------------------------
+            # Legend
+            # ---------------------------------------------------------
+
+            st.markdown(
+                (
+                    '<div class="environment-legend">'
+                    '🏠 Bien analysé &nbsp;&nbsp; '
+                    '🚇 Transport &nbsp;&nbsp; '
+                    '🌳 Espaces verts &nbsp;&nbsp; '
+                    '🛒 Supermarchés'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
+            )
 
             st_folium(
                 property_map,
@@ -764,6 +964,61 @@ if st.session_state.valuation_result is not None:
                 "reconnue par le service de géocodage. Elle peut être "
                 "résolue au niveau de la rue plutôt qu'au bâtiment exact."
             )
+
+            # ---------------------------------------------------------
+            # Nearby environment summary
+            # ---------------------------------------------------------
+
+            if environment:
+
+                st.markdown("### À proximité")
+
+                transport_column, green_column, shop_column = st.columns(
+                    3,
+                    gap="large",
+                )
+
+                with transport_column:
+
+                    render_nearby_places(
+                        "🚇 Transports",
+                        environment.get(
+                            "transport",
+                            [],
+                        ),
+                    )
+
+                with green_column:
+
+                    render_nearby_places(
+                        "🌳 Espaces verts",
+                        environment.get(
+                            "green_spaces",
+                            [],
+                        ),
+                    )
+
+                with shop_column:
+
+                    render_nearby_places(
+                        "🛒 Supermarchés",
+                        environment.get(
+                            "supermarkets",
+                            [],
+                        ),
+                    )
+
+                st.caption(
+                    "Distances indicatives fournies à partir de la "
+                    "localisation reconnue du bien."
+                )
+
+            else:
+
+                st.info(
+                    "Les informations de proximité sont temporairement "
+                    "indisponibles. La carte et l'estimation restent utilisables."
+                )
 
     # -----------------------------------------------------------------
     # NEIGHBORHOOD TAB
