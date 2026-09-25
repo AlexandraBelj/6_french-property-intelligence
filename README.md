@@ -1,535 +1,459 @@
-French Property Intelligence
+# French Property Intelligence
 
-Overview
+> End-to-end machine-learning application for residential property
+> valuation in metropolitan France.
 
-French Property Intelligence is an end-to-end machine-learning application for residential property valuation in metropolitan France.
+French Property Intelligence estimates an **indicative residential sale
+value** from property characteristics and location, then enriches the
+result with geographic context, Street View exploration, and a
+GenAI-generated property description.
 
-The project addresses a practical question:
+The project covers the full workflow from large-scale transaction
+analysis to deployed inference: **EDA, leakage-aware modeling, baseline
+comparison, LightGBM, MLflow, AWS S3, Neon PostgreSQL, FastAPI,
+Streamlit, Docker, Hugging Face Spaces, geospatial services, and
+GenAI**.
 
-Given a residential property's characteristics and location, what is a reasonable indicative sale value?
+> **Important:** this application is a decision-support tool.
+> Predictions are statistical estimates based on historical transactions
+> and are not professional or legal property appraisals.
 
-The solution combines data analysis, machine learning, experiment tracking, cloud storage, API development, geospatial services, generative AI, containerization, and cloud deployment.
+## Table of Contents
 
-Two specialized regression models estimate the value of houses and apartments. The production application then enriches the valuation with address resolution, nearby amenities, neighborhood exploration through Street View, and an AI-generated property description based only on verified structured information.
+-   [Live Applications & Services](#live-applications--services)
+-   [Business Problem](#business-problem)
+-   [Dataset](#dataset)
+-   [Data Preparation & Leakage
+    Prevention](#data-preparation--leakage-prevention)
+-   [Exploratory Data Analysis](#exploratory-data-analysis)
+-   [Machine-Learning Strategy](#machine-learning-strategy)
+-   [Model Performance](#model-performance)
+-   [Production Inference Pipeline](#production-inference-pipeline)
+-   [Property Intelligence Features](#property-intelligence-features)
+-   [MLflow Experiment Tracking](#mlflow-experiment-tracking)
+-   [FastAPI Service](#fastapi-service)
+-   [Streamlit Application](#streamlit-application)
+-   [Deployment Architecture](#deployment-architecture)
+-   [Technologies](#technologies)
+-   [Project Structure](#project-structure)
+-   [Reproducibility](#reproducibility)
+-   [Privacy & External Services](#privacy--external-services)
+-   [Limitations](#limitations)
+-   [Conclusion](#conclusion)
 
-The application is designed as a decision-support tool. Its predictions are indicative statistical estimates and should not be interpreted as professional or legal property appraisals.
+------------------------------------------------------------------------
 
-This project was developed as part of the Jedha Data Science certification.
+## Live Applications & Services
 
-Live Applications & Services
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Component                           Access
+  ----------------------------------- ---------------------------------------------------------------------------------------------------------------------------
+  **French Property Intelligence ---  [Open application](https://huggingface.co/spaces/AlexBelj/french-property-intelligence)
+  Streamlit**                         
 
-Component
+  **Valuation API**                   [Open API](https://alexbelj-french-property-intelligence-api.hf.space)
 
-Access
+  **Interactive API Documentation**   [Open Swagger UI](https://alexbelj-french-property-intelligence-api.hf.space/docs)
 
-French Property Intelligence — Streamlit
+  **MLflow Tracking Server**          [Open MLflow](https://alexbelj-french-property-intelligence-mlflow.hf.space)
 
-https://huggingface.co/spaces/AlexBelj/french-property-intelligence
+  **MLflow Production Run**           [Open production
+                                      run](https://alexbelj-french-property-intelligence-mlflow.hf.space/#/experiments/2/runs/5b05b053d6384752bf565505fa222410)
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Valuation API
+The Streamlit application, FastAPI service, and MLflow tracking server
+are deployed on **Hugging Face Spaces**.
 
-https://alexbelj-french-property-intelligence-api.hf.space
+MLflow uses **Neon PostgreSQL** as its backend metadata store and **AWS
+S3** as its artifact store. The production model artifact is also stored
+in S3 and loaded by the FastAPI service at runtime.
 
-Interactive API Documentation
+------------------------------------------------------------------------
 
-https://alexbelj-french-property-intelligence-api.hf.space/docs
+## Business Problem
 
-MLflow Tracking Server
+Residential property valuation depends on both property characteristics
+and geographic context.
 
-https://alexbelj-french-property-intelligence-mlflow.hf.space
+The objective is to estimate a reasonable indicative sale value from a
+compact set of information available to a user:
 
-MLflow Production Run
+-   property type
+-   habitable surface
+-   number of rooms
+-   VEFA status
+-   address / geographic location
 
-https://alexbelj-french-property-intelligence-mlflow.hf.space/#/experiments/2/runs/5b05b053d6384752bf565505fa222410
+The system deliberately separates two concerns:
 
-The Streamlit application, FastAPI service, and MLflow tracking server are deployed on Hugging Face Spaces.
+-   **Valuation** --- supervised machine learning estimates the
+    property's value.
+-   **Property intelligence** --- external geospatial services and
+    generative AI provide contextual information around that estimate.
 
-MLflow uses Neon PostgreSQL as its backend metadata store and AWS S3 as its artifact store. The production model artifact is also stored in S3 and loaded by the FastAPI service at runtime.
+This separation is fundamental: **the machine-learning models determine
+the estimated value. GenAI does not participate in price prediction.**
+The GenAI layer only transforms verified structured property, valuation,
+and environment information into natural-language text.
 
-Business Problem
+------------------------------------------------------------------------
 
-Residential property valuation depends on both the characteristics of a property and its geographic context.
+## Dataset
 
-The objective of this project is to build a production-ready system able to estimate an indicative sale value from a compact set of information available to a user:
-
-property type;
-
-habitable surface;
-
-number of rooms;
-
-VEFA status;
-
-address / geographic location.
-
-The project deliberately separates two concerns:
-
-Valuation — supervised machine learning estimates the property's value.
-
-Property intelligence — external geospatial services and generative AI provide contextual information around that estimate.
-
-This distinction is important:
-
-The machine-learning models determine the estimated value. Generative AI does not participate in price prediction.
-
-The GenAI layer only transforms verified structured property, valuation, and environment information into natural-language text.
-
-Dataset
-
-The modeling data is based on historical French residential property transactions.
+The modeling data is based on historical French residential property
+transactions.
 
 The initial transaction dataset contains approximately:
 
-9.14 million transactions;
+-   **9.14 million transactions**
+-   transactions from **2014-01-01 to 2024-06-30**
+-   houses and apartments
+-   transaction prices
+-   habitable surfaces
+-   room counts
+-   property types
+-   VEFA information
+-   geographic attributes
 
-transactions from 2014-01-01 to 2024-06-30;
-
-houses and apartments;
-
-transaction prices;
-
-habitable surfaces;
-
-room counts;
-
-property types;
-
-VEFA information;
-
-geographic attributes.
-
-After restricting the geographic scope to metropolitan France, approximately 9.05 million records remain.
+After restricting the geographic scope to metropolitan France,
+approximately **9.05 million records** remain.
 
 For modeling, the project focuses on the more recent period:
+**2020-01-01 → 2024-06-30**.
 
-2020-01-01 → 2024-06-30
+After cleaning and modeling filters, the master modeling dataset
+contains approximately **4.13 million transactions**.
 
-After cleaning and modeling filters, the master modeling dataset contains approximately:
+Raw and processed datasets are intentionally not committed to the GitHub
+repository.
 
-4.13 million transactions
+------------------------------------------------------------------------
 
-The raw and processed datasets are intentionally not committed to the GitHub repository.
+## Data Preparation & Leakage Prevention
 
-Data Preparation & Leakage Prevention
+Property-transaction data requires careful cleaning because extreme or
+inconsistent observations can strongly affect regression models.
 
-Property-transaction data requires careful cleaning because extreme or inconsistent observations can strongly affect regression models.
+### Data preparation
 
 The modeling preparation includes:
 
-restriction to houses and apartments;
+-   restriction to houses and apartments
+-   metropolitan-France filtering
+-   recent transaction-period selection
+-   target and surface quality controls
+-   treatment of implausible room counts
+-   geographic feature preparation
+-   categorical normalization
 
-metropolitan-France filtering;
+Training-quality filters include:
 
-recent transaction-period selection;
+-   price per square meter: **€100/m² → €30,000/m²**
+-   habitable surface: **10 m² → 500 m²**
 
-target and surface quality controls;
+Extreme room-count anomalies are treated as missing rather than being
+interpreted as reliable property information.
 
-treatment of implausible room counts;
+### Leakage prevention
 
-geographic feature preparation;
-
-categorical normalization.
-
-Training-quality filters include a price-per-square-meter range of:
-
-€100/m² → €30,000/m²
-
-and a habitable-surface range of:
-
-10 m² → 500 m²
-
-Extreme room-count anomalies are treated as missing rather than being interpreted as reliable property information.
-
-Leakage Prevention
-
-The project explicitly avoids using information that would reveal the target or create unrealistic evaluation conditions.
+The project explicitly avoids information that would reveal the target
+or create unrealistic evaluation conditions.
 
 The modeling strategy includes:
 
-no direct use of transaction price-derived predictors at inference time;
+-   no direct use of transaction price-derived predictors at inference
+    time
+-   no valuation-date predictor in the final production model
+-   grouping by parcel when constructing train/validation/test
+    partitions
+-   **no parcel overlap** between those partitions
+-   separate validation and final held-out test evaluation
 
-no valuation-date predictor in the final production model;
+The project is treated as a **cross-sectional property valuation
+problem**, rather than a time-series forecasting problem.
 
-grouping by parcel when constructing train/validation/test partitions;
+------------------------------------------------------------------------
 
-no parcel overlap between those partitions;
+## Exploratory Data Analysis
 
-separate validation and final held-out test evaluation.
-
-The project is treated as a cross-sectional property valuation problem, rather than a time-series forecasting problem.
-
-Exploratory Data Analysis
-
-The EDA focuses on questions that materially affect data preparation and modeling rather than producing exhaustive descriptive charts.
+The EDA focuses on questions that materially affect data preparation and
+modeling rather than producing exhaustive descriptive charts.
 
 Important observations include:
 
-houses represent approximately 55% of metropolitan transactions;
+-   houses represent approximately **55%** of metropolitan transactions
+-   apartments represent approximately **45%**
+-   VEFA transactions account for roughly **4%**
+-   the price distribution is strongly right-skewed
+-   the metropolitan median transaction value is approximately
+    **€170,000**
 
-apartments represent approximately 45%;
+Because high-value transactions create a long upper tail, **Mean
+Absolute Error (MAE)** is used as the primary evaluation metric.
+**RMSE** and **R²** are retained as complementary metrics.
 
-VEFA transactions account for roughly 4%;
+------------------------------------------------------------------------
 
-the price distribution is strongly right-skewed;
+## Machine-Learning Strategy
 
-the metropolitan median transaction value is approximately €170,000.
+Houses and apartments have materially different market structures. The
+project therefore uses two specialized production models rather than
+forcing both property types through a single regression model.
 
-Because high-value transactions create a long upper tail, Mean Absolute Error (MAE) is used as the primary evaluation metric.
-
-RMSE and R² are retained as complementary metrics.
-
-Machine-Learning Strategy
-
-Houses and apartments have materially different market structures.
-
-The project therefore uses two specialized production models rather than forcing both property types through a single regression model:
-
+``` text
 User property
-      │
-      ├── House ───────→ House LightGBM model
-      │
-      └── Apartment ───→ Apartment LightGBM model
+    │
+    ├── House ───────→ House LightGBM model
+    │
+    └── Apartment ───→ Apartment LightGBM model
+```
 
-Both final models use LightGBM regression with an L1 objective.
+Both final models use **LightGBM regression with an L1 objective**.
 
-House Features
+### House features
 
 The house model uses:
 
-habitable surface;
+-   habitable surface
+-   number of rooms
+-   VEFA status
+-   latitude
+-   longitude
+-   postcode
+-   virtual-neighborhood information
 
-number of rooms;
-
-VEFA status;
-
-latitude;
-
-longitude;
-
-postcode;
-
-virtual neighborhood information.
-
-Apartment Features
+### Apartment features
 
 The apartment model uses:
 
-habitable surface;
-
-number of rooms;
-
-VEFA status;
-
-latitude;
-
-longitude;
-
-postcode.
+-   habitable surface
+-   number of rooms
+-   VEFA status
+-   latitude
+-   longitude
+-   postcode
 
 The virtual-neighborhood feature is used only for the house model.
 
-Train / Validation / Test Design
+### Train / validation / test design
 
-The cleaned data is divided into separate training, validation, and held-out test partitions.
+  Property type      Training   Validation      Test
+  --------------- ----------- ------------ ---------
+  **House**         1,630,944      349,176   349,001
+  **Apartment**     1,263,001      269,977   268,358
 
-Houses
+The final test sets remain isolated from model tuning and are used only
+for final performance assessment.
 
-Training:    1,630,944
-Validation:    349,176
-Test:          349,001
+------------------------------------------------------------------------
 
-Apartments
+## Model Performance
 
-Training:    1,263,001
-Validation:    269,977
-Test:          268,358
+### Baselines
 
-The final test sets remain isolated from model tuning and are used only for final performance assessment.
+Simple baselines establish whether more advanced models provide
+meaningful predictive value.
 
-Baselines
+#### Naive baseline
 
-Simple baselines establish whether more advanced models provide meaningful predictive value.
+  Property type          MAE
+  --------------- ----------
+  House             €133,559
+  Apartment         €122,966
 
-Naive Baseline
+#### Ridge Regression
 
-Property type
+  Property type          MAE       RMSE      R²
+  --------------- ---------- ---------- -------
+  House             €124,039   €223,815   0.203
+  Apartment         €122,592   €212,375   0.266
 
-MAE
+These baselines provide a quantitative reference for evaluating the
+final LightGBM models.
 
-House
+### Final held-out test performance
 
-€133,559
+  Property type   Model                MAE           RMSE          R²
+  --------------- ---------- ------------- -------------- -----------
+  **House**       LightGBM     **€68,296**   **€136,391**   **0.702**
+  **Apartment**   LightGBM     **€47,499**   **€104,031**   **0.824**
 
-Apartment
+Compared with the tested baselines, the LightGBM models substantially
+reduce absolute prediction error and explain a much larger share of
+observed price variation.
 
-€122,966
+### Validation performance
 
-Ridge Regression
+-   House validation MAE: approximately **€68,636**
+-   Apartment validation MAE: approximately **€47,489**
 
-Property type
+The similarity between validation and held-out test performance provides
+an additional check on model generalization within the evaluated
+historical population.
 
-MAE
+------------------------------------------------------------------------
 
-RMSE
-
-R²
-
-House
-
-€124,039
-
-€223,815
-
-0.203
-
-Apartment
-
-€122,592
-
-€212,375
-
-0.266
-
-These baselines provide a quantitative reference for evaluating the final LightGBM models.
-
-Final Model Performance
-
-The final models are evaluated on held-out test data.
-
-Property type
-
-Model
-
-MAE
-
-RMSE
-
-R²
-
-House
-
-LightGBM
-
-€68,296
-
-€136,391
-
-0.702
-
-Apartment
-
-LightGBM
-
-€47,499
-
-€104,031
-
-0.824
-
-Compared with the tested baselines, the LightGBM models substantially reduce absolute prediction error and explain a much larger share of observed price variation.
-
-Validation Performance
-
-The house model achieved a validation MAE of approximately:
-
-€68,636
-
-The apartment model achieved a validation MAE of approximately:
-
-€47,489
-
-The similarity between validation and held-out test performance provides an additional check on model generalization within the evaluated historical population.
-
-Production Inference Pipeline
+## Production Inference Pipeline
 
 The production models are wrapped in a dedicated inference class:
 
+``` text
 PropertyValuationModel
+```
 
-The wrapper centralizes the transformations required for prediction and routes each property to the appropriate specialized model.
+The wrapper centralizes the transformations required for prediction and
+routes each property to the appropriate specialized model.
 
 Its responsibilities include:
 
-property-type normalization;
-
-input validation;
-
-postcode normalization;
-
-categorical handling;
-
-geographic transformation;
-
-virtual-neighborhood assignment for houses;
-
-house/apartment model routing;
-
-final price prediction.
+-   property-type normalization
+-   input validation
+-   postcode normalization
+-   categorical handling
+-   geographic transformation
+-   virtual-neighborhood assignment for houses
+-   house/apartment model routing
+-   final price prediction
 
 The serialized production artifact is:
 
+``` text
 model.pkl
+```
 
 The model binary is deliberately excluded from Git.
 
-The production artifact is stored in AWS S3 and its integrity is checked before loading using a fixed SHA-256 hash.
+The production artifact is stored in **AWS S3**, and its integrity is
+checked before loading using a fixed **SHA-256 hash**. This helps ensure
+that the deployed API loads the same validated model artifact produced
+during the modeling workflow.
 
-This helps ensure that the deployed API loads the same validated model artifact that was produced during the modeling workflow.
+------------------------------------------------------------------------
 
-Property Intelligence Features
+## Property Intelligence Features
 
-The Streamlit application extends the statistical valuation with contextual information useful for exploring a property.
+The Streamlit application extends the statistical valuation with
+contextual information useful for exploring a property.
 
-1. Property Valuation
+### 1. Property Valuation
 
-The user enters:
+The user enters an address, property type, habitable surface, number of
+rooms, and VEFA status.
 
-address;
+The address is geocoded, the appropriate machine-learning model is
+selected, and an indicative estimated sale value is returned.
 
-property type;
+### 2. Property Environment
 
-habitable surface;
+The application displays nearby **public transport, parks and green
+spaces, and supermarkets**.
 
-number of rooms;
+Nearby-place information is obtained from **Geoapify** using the
+geocoded property coordinates. The interface displays the surrounding
+environment on an interactive map together with nearby-place names and
+distances.
 
-VEFA status.
+### 3. Neighborhood Street View
 
-The address is geocoded, the appropriate machine-learning model is selected, and an indicative estimated sale value is returned.
+A dedicated tab provides access to **Google Street View** so the user
+can visually explore the neighborhood around the resolved property
+location.
 
-2. Property Environment
+The available panorama may correspond to the nearest Street View
+coverage rather than the exact building entered by the user.
 
-The application displays nearby amenities around the property, including:
+### 4. GenAI Property Description
 
-public transport;
+The application can generate a short French property description using a
+Hugging Face-hosted language model:
 
-parks and green spaces;
-
-supermarkets.
-
-Nearby-place information is obtained from Geoapify using the geocoded property coordinates.
-
-The interface displays the surrounding environment on an interactive map together with nearby-place names and distances.
-
-3. Neighborhood Street View
-
-A dedicated tab provides access to Google Street View so the user can visually explore the neighborhood around the resolved property location.
-
-The available panorama may correspond to the nearest Street View coverage rather than the exact building entered by the user.
-
-4. GenAI Property Description
-
-The application can generate a short French property description using a Hugging Face-hosted language model.
-
-The production generation model is:
-
+``` text
 Qwen/Qwen3.8-27B
+```
 
-The language model receives only structured information already available to the application, such as:
+The language model receives only structured information already
+available to the application, including property type, surface, number
+of rooms, VEFA status, resolved address, estimated value, and nearby
+verified points of interest.
 
-property type;
+The prompt explicitly prevents the model from inventing unsupported
+characteristics such as balcony or terrace, floor, parking or garage,
+elevator, view or exposure, luminosity, renovation status, construction
+period, DPE, or interior equipment.
 
-surface;
+The generated text is therefore a **presentation layer, not an
+additional valuation model**.
 
-number of rooms;
+------------------------------------------------------------------------
 
-VEFA status;
+## MLflow Experiment Tracking
 
-resolved address;
+MLflow is used to preserve the production-model experiment and
+associated metrics and artifacts.
 
-estimated value;
+-   **Experiment:** `french-property-intelligence`
+-   **Final production run:** `final-production-model`
+-   **Tracking server:** [MLflow on Hugging Face
+    Spaces](https://alexbelj-french-property-intelligence-mlflow.hf.space)
 
-nearby verified points of interest.
+MLflow records production-model information and evaluation metrics,
+while the model artifact is stored in AWS S3.
 
-The prompt explicitly prevents the model from inventing unsupported characteristics such as:
+### MLflow architecture
 
-balcony or terrace;
+``` text
+                  ┌──────────────────────┐
+                  │    MLflow Server     │
+                  │ Hugging Face Space   │
+                  └──────────┬───────────┘
+                             │
+                ┌────────────┴────────────┐
+                │                         │
+                ▼                         ▼
+       ┌──────────────────┐      ┌──────────────────┐
+       │ Neon PostgreSQL  │      │      AWS S3      │
+       │ backend metadata │      │ model/artifacts  │
+       └──────────────────┘      └──────────────────┘
+```
 
-floor;
+This separates experiment metadata from binary artifacts and keeps large
+model files outside the Git repository.
 
-parking or garage;
+------------------------------------------------------------------------
 
-elevator;
+## FastAPI Service
 
-view or exposure;
+The production inference and context services are exposed through
+**FastAPI**.
 
-luminosity;
+[Open the FastAPI Swagger / OpenAPI
+documentation](https://alexbelj-french-property-intelligence-api.hf.space/docs)
 
-renovation status;
+### Main endpoints
 
-construction period;
+  -----------------------------------------------------------------------
+  Method                  Endpoint                Responsibility
+  ----------------------- ----------------------- -----------------------
+  `POST`                  `/predict`              Property valuation
 
-DPE;
+  `GET`                   `/location`             Resolve an address into
+                                                  geographic information
 
-interior equipment.
+  `GET`                   `/environment`          Retrieve nearby points
+                                                  of interest
 
-The generated text is therefore a presentation layer, not an additional valuation model.
+  `POST`                  `/description`          Generate
+                                                  natural-language text
+                                                  from structured facts
+  -----------------------------------------------------------------------
 
-MLflow Experiment Tracking
+The responsibilities remain deliberately separated so contextual or
+generative functionality does not become part of the statistical
+valuation model.
 
-MLflow is used to preserve the production-model experiment and associated metrics and artifacts.
+### Prediction request
 
-The production MLflow server is deployed on Hugging Face Spaces:
-
-https://alexbelj-french-property-intelligence-mlflow.hf.space
-
-The experiment is:
-
-french-property-intelligence
-
-The final production run is:
-
-final-production-model
-
-MLflow records the production model information and evaluation metrics, while the model artifact is stored in AWS S3.
-
-MLflow Architecture
-
-                    ┌──────────────────────┐
-                    │   MLflow Server      │
-                    │ Hugging Face Space   │
-                    └──────────┬───────────┘
-                               │
-                  ┌────────────┴────────────┐
-                  │                         │
-                  ▼                         ▼
-        ┌──────────────────┐      ┌──────────────────┐
-        │ Neon PostgreSQL  │      │      AWS S3      │
-        │ backend metadata │      │ model/artifacts  │
-        └──────────────────┘      └──────────────────┘
-
-This separates experiment metadata from binary artifacts and keeps large model files outside the Git repository.
-
-FastAPI Service
-
-The production inference and context services are exposed through FastAPI.
-
-Interactive documentation is available at:
-
-https://alexbelj-french-property-intelligence-api.hf.space/docs
-
-Main Endpoints
-
-POST /predict
-GET  /location
-GET  /environment
-POST /description
-
-The responsibilities remain deliberately separated:
-
-/predict performs property valuation;
-
-/location resolves an address into geographic information;
-
-/environment retrieves nearby points of interest;
-
-/description generates natural-language text from structured facts.
-
-Prediction Request
-
-A valuation request contains the property characteristics required by the production model.
-
-Example:
-
+``` json
 {
   "property_type": "apartment",
   "surface_habitable": 65,
@@ -539,133 +463,109 @@ Example:
   "longitude": 2.3362,
   "postcode": "75001"
 }
+```
 
 The API returns the model's estimated property value.
 
-FastAPI automatically exposes OpenAPI/Swagger documentation at /docs, where the endpoints can be inspected and tested interactively.
+FastAPI automatically exposes OpenAPI/Swagger documentation at `/docs`,
+where the endpoints can be inspected and tested interactively.
 
-Streamlit Application
+------------------------------------------------------------------------
 
-The public user interface is deployed at:
+## Streamlit Application
 
-https://huggingface.co/spaces/AlexBelj/french-property-intelligence
+The public user interface is deployed at [French Property Intelligence
+---
+Streamlit](https://huggingface.co/spaces/AlexBelj/french-property-intelligence).
 
 The interface is organized around four complementary views:
 
-Estimation
-Environnement
-Quartier
-Description
+1.  **Estimation**
+2.  **Environnement**
+3.  **Quartier**
+4.  **Description**
 
-A successful valuation is retained across the interface so the user can move between the different property-intelligence views without recomputing the prediction.
+A successful valuation is retained across the interface so the user can
+move between the different property-intelligence views without
+recomputing the prediction.
 
-The Streamlit application does not load the machine-learning model directly.
+The Streamlit application does **not** load the machine-learning model
+directly:
 
-Instead:
-
+``` text
 Streamlit → FastAPI → production model
+```
 
-This keeps the user interface separate from the inference service and provides a clear production API boundary.
+This keeps the user interface separate from the inference service and
+provides a clear production API boundary.
 
-Deployment Architecture
+------------------------------------------------------------------------
 
-The complete production architecture is:
+## Deployment Architecture
 
+``` text
                          GitHub
                     source of truth
-                           │
-          ┌────────────────┼────────────────┐
-          │                │                │
-          ▼                ▼                ▼
-     Streamlit          FastAPI           MLflow
-     HF Space           HF Space          HF Space
-          │                │                │
-          │                │         ┌──────┴──────┐
-          │                │         │             │
-          │                │         ▼             ▼
-          │                │       Neon          AWS S3
-          │                │     PostgreSQL     artifacts
-          │                │
-          └───────────────►│
-                           │
-             ┌─────────────┼──────────────┐
-             │             │              │
-             ▼             ▼              ▼
-         Geocoding     Geoapify      HF Inference
-          service       Places          Qwen
-                           │
-                           ▼
-                    production model
-                       from S3
+                          │
+          ┌───────────────┼────────────────┐
+          │               │                │
+          ▼               ▼                ▼
+     Streamlit         FastAPI           MLflow
+      HF Space          HF Space          HF Space
+          │               │                │
+          │               │         ┌──────┴──────┐
+          │               │         │             │
+          │               │         ▼             ▼
+          │               │       Neon          AWS S3
+          │               │    PostgreSQL      artifacts
+          │               │
+          └──────────────►│
+                          │
+             ┌────────────┼──────────────┐
+             │            │              │
+             ▼            ▼              ▼
+         Geocoding    Geoapify      HF Inference
+          service      Places           Qwen
+                          │
+                          ▼
+                   production model
+                      from S3
+```
 
-GitHub is the source of truth for application code.
+**GitHub is the source of truth for application code.** Hugging Face
+Spaces contain deployment copies of the services.
 
-Hugging Face Spaces contain deployment copies of the services. Secrets and cloud credentials are configured through deployment environment variables/secrets and are not stored in Git.
+Secrets and cloud credentials are configured through deployment
+environment variables/secrets and are not stored in Git.
 
-Technologies
+------------------------------------------------------------------------
 
-Data & Machine Learning
+## Technologies
 
-Python
+### Data & Machine Learning
 
-pandas
+Python · pandas · NumPy · SciPy · scikit-learn · LightGBM · PyProj ·
+joblib · Jupyter Notebook
 
-NumPy
+### Visualization & Application
 
-SciPy
+Streamlit · interactive mapping · Google Street View
 
-scikit-learn
+### API & External Services
 
-LightGBM
+FastAPI · Pydantic · Geoapify · French geocoding service · Hugging Face
+Inference · Qwen
 
-PyProj
+### MLOps & Deployment
 
-joblib
+MLflow · Neon PostgreSQL · AWS S3 · boto3 · Docker · Hugging Face Spaces
+· Git · GitHub
 
-Jupyter Notebook
+------------------------------------------------------------------------
 
-Visualization & Application
+## Project Structure
 
-Streamlit
-
-interactive mapping
-
-Google Street View
-
-API & External Services
-
-FastAPI
-
-Pydantic
-
-Geoapify
-
-French geocoding service
-
-Hugging Face Inference
-
-Qwen
-
-MLOps & Deployment
-
-MLflow
-
-Neon PostgreSQL
-
-AWS S3
-
-boto3
-
-Docker
-
-Hugging Face Spaces
-
-Git
-
-GitHub
-
-Project Structure
-
+``` text
 6_french-property-intelligence/
 │
 ├── api/
@@ -704,149 +604,169 @@ Project Structure
 │
 ├── .gitignore
 └── README.md
+```
 
-Generated data, production model binaries, credentials, caches, and other runtime artifacts are excluded from Git.
+Generated data, production model binaries, credentials, caches, and
+other runtime artifacts are excluded from Git.
 
-Reproducibility
+------------------------------------------------------------------------
 
-1. Clone the Repository
+## Reproducibility
 
+### 1. Clone the repository
+
+``` bash
 git clone https://github.com/AlexandraBelj/6-french-property-intelligence.git
-cd 6_french-property-intelligence
+cd 6-french-property-intelligence
+```
 
-2. Create a Virtual Environment
+### 2. Create a virtual environment
 
+``` bash
 python -m venv .venv
+```
 
 Activate it using the command appropriate for the operating system.
 
-3. Install Dependencies
+### 3. Install dependencies
 
-Install the project dependencies required for the workflow being reproduced.
+Install the project dependencies required for the workflow being
+reproduced.
 
-Deployment-specific requirements are kept with the corresponding Docker deployment configuration.
+Deployment-specific requirements are kept with the corresponding Docker
+deployment configuration.
 
-4. Add the Source Data
+### 4. Add the source data
 
 The raw transaction data must be placed under:
 
+``` text
 data/raw/
+```
 
-Raw and processed datasets are excluded from Git because of their size and data-management requirements.
+Raw and processed datasets are excluded from Git because of their size
+and data-management requirements.
 
-5. Run the FastAPI Service Locally
+### 5. Run the FastAPI service locally
 
 With the required environment variables configured:
 
+``` bash
 uvicorn api.main:app --host 127.0.0.1 --port 8001
+```
 
-Interactive API documentation is then available locally at:
+Interactive API documentation is then available locally at
+`http://127.0.0.1:8001/docs`.
 
-http://127.0.0.1:8001/docs
-
-6. Run Streamlit Locally
+### 6. Run Streamlit locally
 
 Configure Streamlit to use the local API and run:
 
+``` bash
 streamlit run streamlit/app.py
+```
 
-The deployed application is available at:
+### 7. Production configuration
 
-https://huggingface.co/spaces/AlexBelj/french-property-intelligence
+The deployed services require environment-specific configuration for AWS
+S3, MLflow, PostgreSQL, Geoapify, and Hugging Face Inference.
 
-7. Production Configuration
+Credentials and API tokens must be supplied through environment
+variables or deployment secrets and must never be committed to Git.
 
-The deployed services require environment-specific configuration for resources such as:
+------------------------------------------------------------------------
 
-AWS S3;
+## Privacy & External Services
 
-MLflow;
+The application relies on external services for some contextual
+features. Depending on the requested feature, property-location
+information may be transmitted for:
 
-PostgreSQL;
+-   address geocoding
+-   nearby-place retrieval
+-   Street View exploration
+-   generative text generation
 
-Geoapify;
+In particular, the GenAI description service receives the resolved
+address together with structured property, valuation, and environment
+information required to construct the description.
 
-Hugging Face Inference.
+No API keys, cloud credentials, or access tokens are stored in the
+repository. Users should avoid entering unnecessary personal information
+into address or property fields.
 
-Credentials and API tokens must be supplied through environment variables or deployment secrets and must never be committed to Git.
+------------------------------------------------------------------------
 
-Privacy & External Services
+## Limitations
 
-The application relies on external services for some contextual features.
+### Statistical valuation
 
-Depending on the requested feature, property-location information may be transmitted to services used for:
+-   Predictions are based on historical transaction data and do not
+    constitute professional appraisals.
+-   A limited set of property characteristics is available to the model.
+-   Important price determinants such as exact condition, floor,
+    exposure, view, renovation quality, energy performance, or detailed
+    interior characteristics may be unavailable.
+-   Model accuracy varies across property types and geographic markets.
+-   Rare property/location combinations may have substantially greater
+    uncertainty than typical observations.
+-   Historical predictive performance does not guarantee equivalent
+    performance on future transactions.
 
-address geocoding;
+### Geographic context
 
-nearby-place retrieval;
+-   Address geocoding can resolve to a street or approximate location
+    rather than an exact building.
+-   Nearby-place data depends on the coverage and current data available
+    from external providers.
+-   Street View availability and panorama position depend on Google
+    coverage and may not correspond exactly to the entered property.
 
-Street View exploration;
+### Generative AI
 
-generative text generation.
+-   The generated property description is intended to summarize supplied
+    structured information.
+-   The prompt constrains unsupported property claims, but generated
+    text should still be interpreted as automatically produced content.
+-   GenAI does not modify the estimated property value.
+-   Availability depends on the external inference provider.
 
-In particular, the GenAI description service receives the resolved address together with structured property, valuation, and environment information required to construct the description.
+### External services
 
-No API keys, cloud credentials, or access tokens are stored in the repository.
+Some application features depend on third-party APIs. Temporary provider
+outages or quota limits may affect environment, Street View, or
+description functionality without affecting the underlying valuation
+model.
 
-Users should avoid entering unnecessary personal information into address or property fields.
+------------------------------------------------------------------------
 
-Limitations
+## Conclusion
 
-Statistical Valuation
-
-Predictions are based on historical transaction data and do not constitute professional appraisals.
-
-A limited set of property characteristics is available to the model.
-
-Important price determinants such as exact condition, floor, exposure, view, renovation quality, energy performance, or detailed interior characteristics may be unavailable.
-
-Model accuracy varies across property types and geographic markets.
-
-Rare property/location combinations may have substantially greater uncertainty than typical observations.
-
-Historical predictive performance does not guarantee equivalent performance on future transactions.
-
-Geographic Context
-
-Address geocoding can resolve to a street or approximate location rather than an exact building.
-
-Nearby-place data depends on the coverage and current data available from external providers.
-
-Street View availability and panorama position depend on Google coverage and may not correspond exactly to the entered property.
-
-Generative AI
-
-The generated property description is intended to summarize supplied structured information.
-
-The prompt constrains unsupported property claims, but generated text should still be interpreted as automatically produced content.
-
-GenAI does not modify the estimated property value.
-
-Availability depends on the external inference provider.
-
-External Services
-
-Some application features depend on third-party APIs. Temporary provider outages or quota limits may affect environment, Street View, or description functionality without affecting the underlying valuation model.
-
-Conclusion
-
-French Property Intelligence demonstrates an end-to-end data-science workflow from large-scale transaction analysis to deployed machine-learning inference and an interactive property-intelligence product.
+French Property Intelligence demonstrates an end-to-end data-science
+workflow from large-scale transaction analysis to deployed
+machine-learning inference and an interactive property-intelligence
+product.
 
 Two specialized LightGBM models are used for residential valuation:
 
-the house model achieves a held-out MAE of €68,296, RMSE of €136,391, and R² of 0.702;
+-   **House:** MAE **€68,296**, RMSE **€136,391**, R² **0.702**
+-   **Apartment:** MAE **€47,499**, RMSE **€104,031**, R² **0.824**
 
-the apartment model achieves a held-out MAE of €47,499, RMSE of €104,031, and R² of 0.824.
+The production architecture separates the main responsibilities of the
+system:
 
-The production architecture separates the main responsibilities of the system:
+  Component              Responsibility
+  ---------------------- -------------------------------
+  **Machine Learning**   Property valuation
+  **Geospatial APIs**    Factual location context
+  **GenAI**              Natural-language presentation
+  **FastAPI**            Service layer
+  **Streamlit**          User interface
+  **MLflow**             Experiment tracking
+  **Neon PostgreSQL**    Tracking metadata
+  **AWS S3**             Model and artifact storage
 
-Machine Learning → property valuation
-Geospatial APIs  → factual location context
-GenAI            → natural-language presentation
-FastAPI          → service layer
-Streamlit        → user interface
-MLflow           → experiment tracking
-Neon             → tracking metadata
-AWS S3           → model and artifact storage
-
-The result is a reproducible and deployed property-valuation system that combines statistical prediction with useful geographic context while preserving a clear boundary between model-based valuation and AI-generated presentation
+The result is a reproducible and deployed property-valuation system that
+combines statistical prediction with useful geographic context while
+preserving a clear boundary between model-based valuation and
+AI-generated presentation.
